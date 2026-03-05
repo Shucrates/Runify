@@ -1,0 +1,189 @@
+# Run & Rhythm: Strava + Spotify Integration Architecture
+
+This document outlines the architecture, roadmap, and technical details for building a full-stack application that correlates Strava runs with Spotify listening history.
+
+## 1. System Architecture
+
+The application will use a modern React frontend, a FastAPI backend, and a PostgreSQL (or SQLite) database to manage users, tokens, and run/playlist data.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    participant Strava API
+    participant Spotify API
+    participant Database
+
+    User->>Frontend: Login with Strava & Spotify
+    Frontend->>Backend: Initiate OAuth Flow
+    Backend->>Strava API: Request Strava Access
+    Backend->>Spotify API: Request Spotify Access
+    Backend->>Database: Store User OAuth Tokens
+    
+    User->>Frontend: View Recent Runs
+    Frontend->>Backend: Get Runs
+    Backend->>Strava API: Fetch Recent Activities
+    Backend->>Spotify API: Fetch Recently Played Tracks
+    Backend->>Backend: Match Tracks to Run Timestamps
+    Backend->>Database: Store Processed Run & Tracks
+    Backend-->>Frontend: Return Run + Playlist Data
+    Frontend-->>User: Display Statistics & Songs
+```
+
+### Components
+- **Frontend (React)**: Handles user authentication UI, displays run statistics, and lists matched songs.
+- **Backend (FastAPI)**: Manages OAuth 2.0 flows, communicates with external APIs, processes data (timestamp matching), and exposes REST endpoints for the frontend.
+- **Database (SQLite/PostgreSQL)**: Stores user details, OAuth access/refresh tokens securely, cached run data, and matched playlists to avoid re-fetching.
+
+## 2. Folder Structure
+
+We will use a standard monorepo structure separating the frontend and backend.
+
+```text
+run-rhythm-app/
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py                 # FastAPI application entry point
+│   │   ├── api/                    # API routers (auth, runs, tracks)
+│   │   ├── core/                   # Configuration, security, dependencies
+│   │   ├── crud/                   # Database operations
+│   │   ├── models/                 # SQLAlchemy ORM models
+│   │   ├── schemas/                # Pydantic models (input/output validation)
+│   │   ├── services/
+│   │   │   ├── strava_service.py   # Strava API integration
+│   │   │   └── spotify_service.py  # Spotify API integration
+│   │   └── utils/                  # Matching logic, helpers
+│   ├── requirements.txt
+│   └── .env                        # API keys and secrets (Git ignored)
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/             # Reusable UI components
+│   │   ├── pages/                  # Page layouts (Dashboard, Login)
+│   │   ├── services/               # Axios/Fetch setup for backend communication
+│   │   ├── App.jsx
+│   │   └── index.css
+│   └── package.json
+└── README.md
+```
+
+## 3. Step-by-Step Development Roadmap
+
+- **Phase 1: Setup & Environment (Days 1-2)**
+  - Initialize project repositories.
+  - Set up FastAPI backend and React frontend.
+  - Register developer applications on Strava and Spotify to get Client IDs and Secrets.
+- **Phase 2: Authentication Engine (Days 3-5)**
+  - Implement OAuth 2.0 flow for Strava in FastAPI.
+  - Implement OAuth 2.0 flow for Spotify in FastAPI.
+  - Store Access and Refresh tokens in the database.
+- **Phase 3: API Integrations (Days 6-8)**
+  - Write `strava_service.py` to fetch recent activities (filter by `type == 'Run'`).
+  - Write `spotify_service.py` to fetch the user's recently played tracks (using the `/me/player/recently-played` endpoint).
+- **Phase 4: The Matching Logic (Day 9)**
+  - Create the core algorithm to match Spotify track `played_at` timestamps with Strava `start_date` and `elapsed_time`.
+- **Phase 5: API Endpoints & Database (Days 10-12)**
+  - Create endpoints to trigger the sync.
+  - Save the resulting matched run and playlist data to the database.
+- **Phase 6: Frontend Development (Days 13-16)**
+  - Build the login screen.
+  - Build the dashboard to display run stats (distance, pace, duration) alongside the music playlist.
+- **Phase 7: Polish & Optional Features (Days 17+)**
+  - Add functionality to automatically create a Spotify playlist for the run via the Spotify API.
+
+## 4. API Connection Examples
+
+### Strava Example
+```python
+import httpx
+
+async def get_recent_runs(access_token: str):
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = "https://www.strava.com/api/v3/athlete/activities"
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        activities = response.json()
+        
+        # Filter for runs only
+        runs = [act for act in activities if act.get('type') == 'Run']
+        return runs
+```
+
+### Spotify Example
+```python
+import httpx
+
+async def get_recently_played_tracks(access_token: str, after_timestamp: int = None):
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = "https://api.spotify.com/v1/me/player/recently-played"
+    params = {"limit": 50}
+    
+    if after_timestamp:
+        params["after"] = after_timestamp
+        
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        return response.json().get('items', [])
+```
+
+## 5. Timestamp Matching Logic
+
+The matching logic involves comparing the playback time of a track with the start and end boundaries of a run. Both APIs return timestamps (Strava returns ISO 8601 strings, Spotify returns ISO 8601 strings for `played_at`).
+
+```python
+from datetime import datetime, timedelta
+
+def match_songs_to_run(run: dict, recently_played_tracks: list[dict]):
+    # Parse Strava timestamps (Strava's start_date is in UTC)
+    run_start = datetime.fromisoformat(run['start_date'].replace('Z', '+00:00'))
+    
+    # Calculate end time based on elapsed_time (in seconds)
+    run_end = run_start + timedelta(seconds=run['elapsed_time'])
+    
+    matched_tracks = []
+    
+    for item in recently_played_tracks:
+        # Spotify's played_at is the time the track FINISHED playing
+        track_played_at = datetime.fromisoformat(item['played_at'].replace('Z', '+00:00'))
+        track_duration_ms = item['track']['duration_ms']
+        
+        # Estimate when the track started playing
+        track_started_at = track_played_at - timedelta(milliseconds=track_duration_ms)
+        
+        # Check if the track was played during the run
+        # We consider a match if the track started OR ended during the run bounds
+        if (run_start <= track_played_at <= run_end) or \
+           (run_start <= track_started_at <= run_end):
+            matched_tracks.append({
+                "name": item['track']['name'],
+                "artist": item['track']['artists'][0]['name'],
+                "played_at": item['played_at']
+            })
+            
+    return matched_tracks
+```
+
+> [!IMPORTANT]
+> **Spotify API Core Limitation:** The Spotify `recently-played` endpoint only returns the last 50 tracks. Therefore, the app must fetch this data relatively soon after the run ends, otherwise the tracks might be pushed out of history! 
+
+## 6. Suggestions for Production Scaling
+
+As an intermediate developer transitioning this to a production-ready app, here are key architectural upgrades you should consider:
+
+1. **Webhooks over Polling (Crucial due to Spotify limits)**: 
+   Instead of the user clicking "Sync", register a **Webhook with Strava**. When a user finishes a run, Strava POSTs a payload to your backend. Your backend then instantly fetches the Spotify history while it is still fresh (avoiding the 50-track limit issue).
+2. **Background Tasks**: 
+   Matching algorithms and external API calls can be slow. Use **Celery** or **FastAPI BackgroundTasks** (with Redis) to process the runs asynchronously so requests return quickly without blocking the main event thread.
+3. **Database Indexing**: 
+   Index user IDs and activity IDs in your database (e.g., PostgreSQL) so lookups for "has this run been processed already?" are extremely fast to avoid duplicating work.
+4. **Token Refresh Automation**: 
+   OAuth tokens expire quickly. Implement a robust utility that checks if a token is expired before making an API call, and automatically uses the `refresh_token` to get a new access token without interrupting the user.
+5. **Rate-limit Caching**:
+   Both APIs limit requests. Use Redis to cache repeated but static responses (like user profile names/images) to preserve your rate-limit budget for the critical track extraction features.
+6. **Deployment & CI/CD**:
+   Containerize the FastAPI backend and React frontend using Docker for consistent environments. Set up GitHub Actions to automatically run your tests before merging code.
