@@ -68,7 +68,7 @@ async def strava_callback(code: str, db: Session = Depends(get_db)):
 @router.get("/spotify/login")
 def spotify_login(user_id: int):
     """Redirect to Spotify OAuth, passing the user_id as state so we can link it later."""
-    redirect_uri = "http://localhost:8000/auth/spotify/callback"
+    redirect_uri = "http://127.0.0.1:8000/auth/spotify/callback"
     scopes = "user-read-recently-played"
     
     url = (f"https://accounts.spotify.com/authorize?response_type=code"
@@ -87,7 +87,7 @@ async def spotify_callback(code: str, state: str, db: Session = Depends(get_db))
     payload = {
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": "http://localhost:8000/auth/spotify/callback",
+        "redirect_uri": "http://127.0.0.1:8000/auth/spotify/callback",
         "client_id": settings.SPOTIFY_CLIENT_ID,
         "client_secret": settings.SPOTIFY_CLIENT_SECRET,
     }
