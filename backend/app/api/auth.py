@@ -47,10 +47,11 @@ async def strava_callback(code: str, db: Session = Depends(get_db)):
     athlete_id = data['athlete']['id']
     
     # 2. Check if user exists or create new
-    # (Here you would link it to db.query to get user. Skipped for brevity, let's just create one for demo!)
-    user = create_user(db)
-    user.strava_athlete_id = athlete_id
-    db.commit()
+    user = db.query(User).filter(User.strava_athlete_id == athlete_id).first()
+    if not user:
+        user = create_user(db)
+        user.strava_athlete_id = athlete_id
+        db.commit()
     
     # 3. Save tokens
     update_strava_tokens(

@@ -1,0 +1,54 @@
+# Runify: The Path to Production
+
+This roadmap outlines the necessary steps to evolve Runify from a functional prototype into a production-ready, mobile-first web application. 
+
+The core feature goals include a responsive mobile design, automated background data synchronization, automated Spotify playlist creation, and the ability to generate customized shareable PNG images of run statistics and music.
+
+---
+
+## Phase 1: Mobile-First Transformation 📱
+*Goal: Ensure the application looks and feels like a native app on mobile devices since runners primarily check their stats on their phones post-run.*
+
+- [ ] **Responsive Design Overhaul**: Refactor the React Dashboard to use a mobile-first Tailwind approach. The UI should prioritize vertical stacking and large, touch-friendly buttons.
+- [ ] **PWA (Progressive Web App) Setup**: Add a `manifest.json` and a service worker to Vite. This allows users to "Add to Home Screen" on iOS and Android, removing the browser address bar and making it feel like a real app.
+- [ ] **Detailed Activity View**: Create a new `/run/:id` route that expands a single run. Instead of just a high-level summary, show detailed pace splits, elevation gain (fetched from Strava), alongside the matched music timeline.
+
+## Phase 2: Webhooks & Background Automation ⚙️
+*Goal: Remove the manual "Sync Fresh Data" button to prevent users from losing their Spotify history (which is limited to the last 50 tracks).*
+
+- [ ] **Strava Webhook Registration**: Implement an endpoint (`GET /webhook/strava`) in FastAPI to verify Strava push subscriptions, and a (`POST /webhook/strava`) endpoint to receive real-time events.
+- [ ] **Background Task Queue**: Introduce `Celery` with a `Redis` broker to handle the sync logic asynchronously so the webhook endpoint returns a `200 OK` to Strava immediately.
+- [ ] **Automated Sync Workflow**: 
+    1. Strava sends a webhook that Activity ID `12345` was created.
+    2. Celery looks up the associated user in the database via the Strava Athlete ID.
+    3. Celery automatically fetches the Spotify history and runs the matching algorithm.
+    4. Data is silently saved. When the user opens the app, the run is already there.
+
+## Phase 3: Automated Playlist Generation 🎵
+*Goal: Allow the user to save the music they listened to directly to their Spotify account.*
+
+- [ ] **Spotify Scopes Update**: Update the OAuth login flow to request the `playlist-modify-public` and `playlist-modify-private` scopes.
+- [ ] **Playlist Creation API**: Create an endpoint (`POST /runs/{id}/playlist`) that takes a Run ID.
+- [ ] **Spotify API Integration**:
+    1. Call Spotify to create a new playlist named `Runify: [Strava Run Name]`.
+    2. Map the local [PlaylistTrack](file:///C:/Users/Shubham%20Patil/Documents/Runify/Runify/backend/app/models/run.py#26-42) items to their Spotify URIs.
+    3. Call Spotify to add those URIs to the newly created playlist.
+- [ ] **Automation Setting**: Add a user setting (stored in the database) to toggle "Automatically create Spotify playlist after every run". If enabled, append this action to the Phase 2 Celery background task.
+
+## Phase 4: Shareable Static Assets (PNG Generation) 📸
+*Goal: Create Instagram/Strava-friendly images that seamlessly blend run statistics with album thumbnails.*
+
+- [ ] **Design the Template**: Create a visually striking layout using HTML/Tailwind that looks similar to Spotify Wrapped or Strava's sharing cards.
+- [ ] **Frontend PNG Generation**: 
+    - Implement a library like `html-to-image` or `html2canvas` in the React frontend.
+    - Create a hidden DOM element with the stylized template populated by the run's data.
+    - Add a "Share" button to the Dashboard that triggers the library to convert the DOM element into a downloadable `.png` blob.
+- [ ] **(Alternative) Backend Generation**: If higher fidelity is required, implement `Playwright` or `Puppeteer` on the FastAPI backend to render a headless browser page, take a screenshot, and return the image file to the frontend.
+
+## Phase 5: Production Deployment & Scaling 🚀
+- [ ] **Database Migration**: Move from the local SQLite file to a managed PostgreSQL database (e.g., Supabase, RDS, or Railway).
+- [ ] **Secure Secret Management**: Move [.env](file:///C:/Users/Shubham%20Patil/Documents/Runify/Runify/backend/.env) credentials to a secure cloud vault.
+- [ ] **Hosting**: 
+    - Deploy the React frontend to Vercel or Netlify.
+    - Deploy the FastAPI backend and Celery workers to a platform like Render, Railway, or standard AWS EC2 instances.
+- [ ] **Rate Limit Handling**: Implement logic to gracefully handle and retry requests if the application hits Strava or Spotify API rate limits during automated syncing.

@@ -1,13 +1,55 @@
+import time
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.core.database import get_db
-from app.crud.user import get_user
+from app.crud.user import get_user, update_strava_tokens, update_spotify_tokens
 from app.crud.run import get_user_runs, get_run_by_strava_id, create_run_with_tracks
 from app.services.strava_service import get_recent_runs
 from app.services.spotify_service import get_recently_played_tracks
 from app.utils.matching import match_songs_to_run
 
 router = APIRouter()
+
+async def ensure_tokens_valid(user, db: Session):
+    # Refresh Spotify Token
+    if user.spotify_token_expires_at and user.spotify_token_expires_at < time.time() + 60:
+        token_url = "https://accounts.spotify.com/api/token"
+        payload = {
+            "grant_type": "refresh_token",
+            "refresh_token": user.spotify_refresh_token,
+            "client_id": settings.SPOTIFY_CLIENT_ID,
+            "client_secret": settings.SPOTIFY_CLIENT_SECRET,
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        async with httpx.AsyncClient() as client:
+            response = await client.post(token_url, data=payload, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                new_refresh = data.get("refresh_token", user.spotify_refresh_token)
+                expires_at = int(time.time()) + data['expires_in']
+                update_spotify_tokens(db, user, data['access_token'], new_refresh, expires_at)
+            else:
+                raise HTTPException(status_code=401, detail="Spotify session expired. Please reconnect.")
+
+    # Refresh Strava Token
+    if user.strava_token_expires_at and user.strava_token_expires_at < time.time() + 60:
+        token_url = "https://www.strava.com/oauth/token"
+        payload = {
+            "client_id": settings.STRAVA_CLIENT_ID,
+            "client_secret": settings.STRAVA_CLIENT_SECRET,
+            "grant_type": "refresh_token",
+            "refresh_token": user.strava_refresh_token,
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(token_url, data=payload)
+            if response.status_code == 200:
+                data = response.json()
+                update_strava_tokens(db, user, data['access_token'], data['refresh_token'], data['expires_at'])
+            else:
+                raise HTTPException(status_code=401, detail="Strava session expired. Please reconnect.")
+
 
 @router.post("/sync")
 async def sync_runs_and_music(user_id: int, db: Session = Depends(get_db)):
@@ -24,6 +66,9 @@ async def sync_runs_and_music(user_id: int, db: Session = Depends(get_db)):
             status_code=400, 
             detail="User must connect both Strava and Spotify before syncing."
         )
+
+    # 0. Ensure tokens are refreshed if expired
+    await ensure_tokens_valid(user, db)
 
     # 1. Fetch from Strava & Spotify simultaneously
     try:

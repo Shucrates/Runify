@@ -15,6 +15,7 @@ class Run(Base):
     distance_meters = Column(Float)
     elapsed_time_seconds = Column(Integer)
     start_date = Column(DateTime)
+    ai_summary = Column(Text, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
 

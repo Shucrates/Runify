@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     SPOTIFY_CLIENT_ID: str = ""
     SPOTIFY_CLIENT_SECRET: str = ""
 
+    # Groq AI
+    GROQ_API_KEY: str = ""
+
     # JWT Secret Key (for securing our own app's sessions if needed)
     SECRET_KEY: str = "YOUR_SUPER_SECRET_KEY_HERE_CHANGE_IN_PRODUCTION"
     
